@@ -7,13 +7,62 @@
 // Dependencies
 const through = require('through2'),
       fs = require('fs'),
-      path = require('path');
+      path = require('path'),
+      File     = require('vinyl');
 
-module.exports.getSvgs = getSvgs;
+var expressions = {
+  svg : /(<svg)([^<]*|[^>]*)([\s\S]*?)<\/svg>/gm,
+  properties : /(\S+)=["']?((?:.(?!["']?\s+(?:\S+)=|[>"']))+.)["']?/gm,
+};
 
-////////////////////////////////////////////////////////////////////////////////
-// Functions
-////////////////////////////////////////////////////////////////////////////////
+var PLUGIN_NAME = 'gulp-svg-to-symbols';
+var files = {};
+var something = {};
+var outputFile = null;
+var options = {
+  name            : 'var templates',
+  folderDelimiter : '|',
+  removeFileTypes : true,
+};
+var opener = '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="0" height="0" style="position:absolute; display:none; overflow:hidden !important;">\n';
+
+function getProperties(properties) {
+  var props = [];
+  var match;
+  while ((match = expressions.properties.exec(properties)) != null) {
+      props[match[1].toLowerCase()] = match[2];
+  }
+  return props;
+}
+
+function getDimensions(viewbox) {
+  var coords = viewbox.split(" ");
+  return {width:coords[2], height:coords[3]}
+}
+
+function parseFileName( file ){
+  var name = path.basename(file.path).replace(/(.*)\.[^.]+$/g, '$1').toLowerCase();
+  return name;
+}
+
+function parseFileContent( file ){
+    var contents = file.contents.toString("utf-8");
+    var fileName = parseFileName(file);
+    var safename = ("icon-" + fileName).replace('icon-icon', 'icon');
+    //svgString
+    // if( options.minify )
+    //     contents = contents.replace( /\s[\r\n ]+/g, '' ) // remove new lines
+    //                        .replace(/>\s+</g, "><");     // remove whitespaces between tags
+    var content = contents.replace(expressions.svg, '$3').replace(/<!--(.*?)-->/, '').replace(/<\?xml.*?\?>/, '')
+    var properties = getProperties(contents.replace(expressions.svg, '$2'));
+    var dimensions = getDimensions(properties.viewbox);
+    // if ( Object.size(test) > 0 ) {
+      // var [all, tag, properties, content] = test;
+      var contents = `\n<symbol id="${safename}" viewbox="0 0 ${dimensions.width} ${dimensions.height}">\n  ${content}</symbol>\n`;
+      something[fileName] = { "width" : parseInt(dimensions.width, 10), "height" : parseInt(dimensions.height, 10) }
+
+    return contents;
+}
 
 function formatXML(xml) {
       const PADDING = ' '.repeat(2); // set desired indent size here
@@ -40,101 +89,60 @@ function formatXML(xml) {
       }).join('\r\n').replace(/^(?:[\t ]*(?:\r?\n|\r))+/gm, '');
   }
 
-function getProperties(properties) {
-  var props = [];
-  var match;
-  while ((match = expressions.properties.exec(properties)) != null) {
-      props[match[1].toLowerCase()] = match[2];
-  }
-  return props;
+// Iterates on each file in the stream
+function iterateFile( file, enc, callback ){
+  outputFile = outputFile || file;
+  var fileName = parseFileName(file),
+      path = files; // path.relative(file.base, file.path);
+
+  var filePathArr = fileName.split('\\');
+
+  filePathArr.forEach((v, i) => {
+    // last part is the file name itself and not a path
+    if( i == filePathArr.length - 1 ) {
+        path[v] = parseFileContent(file);
+    } else if( v in path ) {
+        path = path[v];
+    } else {
+      path = path[v] = {};
+    }
+  })
+
+  callback();
 }
 
-function getDimensions(viewbox) {
-  var coords = viewbox.split(" ");
-  return {width:coords[2], height:coords[3]}
+
+function objToString (obj) {
+    var str = '';
+    for (var p in obj) {
+        if (obj.hasOwnProperty(p)) {
+            str += obj[p] + '\n';
+        }
+    }
+    return str;
+}
+/**
+ * Push the end result of the files iteration back to the stream
+ */
+function iterationResult( callback ){
+    outputFile = outputFile ? outputFile.clone() : new File();
+
+    // if the user wants to concatenate all the files into one
+    if( options.fileName )
+        outputFile.path = path.resolve(outputFile.base, options.fileName);
+
+        var sassFile = '$symbols:' + JSON.stringify(something).replace(/"/gm, '').replace(/{/gm, '(').replace(/}/gm, ')').replace(/,/gm, ',\n') + ";";
+        fs.writeFileSync('dev/sass/settings/_symbols.scss', sassFile);
+
+    outputFile.contents = new Buffer(
+        opener + formatXML(objToString(files)) + '</svg>'
+    );
+
+    this.push(outputFile);
+    callback();
 }
 
-var expressions = {
-  svg : /(<svg)([^<]*|[^>]*)([\s\S]*?)<\/svg>/gm,
-  properties : /(\S+)=["']?((?:.(?!["']?\s+(?:\S+)=|[>"']))+.)["']?/gm,
-};
-
-Object.size = function(obj) {
-    var size = 0, key;
-    for (key in obj) {
-        if (obj.hasOwnProperty(key)) size++;
-    }
-    return size;
-};
-var opener = '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="0" height="0" style="position:absolute; display:none; overflow:hidden !important;">';
-function getId(file) {
-   return path.basename(file.path).replace(/(.*)\.[^.]+$/g, '$1').toLowerCase();
-}
-
-function getSvgs(options) {
-  // Not necessary to accept options but nice in case you add them later
-  options = options || {};
-  var firstFile = true;
-  var counter = 0;
-  // through2.obj(fn) is a convenience wrapper around through2({ objectMode: true }, fn)
-  //
-  //
-  var stream = through.obj(function (file, enc, callback) {
-    counter ++;
-    if (!firstFile) {
-      firstFile = false;
-
-    }
-
-    if (file.isNull()) {
-      return callback(null, file);
-    }
-
-    if (file.isStream()) {
-      this.emit('error', new Error('Streaming not supported'));
-      return callback();
-    }
-
-    if (file.isBuffer()) {
-
-      var svgString = file.contents.toString();
-
-      // var test = expressions.svg.exec(svgString);
-      // var tag = svgString.replace(expressions.svg, '$1')
-      var content = svgString.replace(expressions.svg, '$3').replace(/<!--(.*?)-->/, '').replace(/<\?xml.*?\?>/, '')
-      // if ( Object.size(test) > 0 ) {
-        var name = getId(file);
-        // var [all, tag, properties, content] = test;
-        var properties = getProperties(svgString.replace(expressions.svg, '$2'));
-        var dimensions = getDimensions(properties.viewbox);
-
-
-        var symbol = `${firstFile ? opener : ''}
-<symbol id="${properties.id || getId(file)}" viewbox="0 0 ${dimensions.width} ${dimensions.height}">
-  ${content}</symbol>
-   `;
-
-        file.contents = new Buffer(formatXML(symbol), "utf8");
-
-        this.push(file);
-
-
-      // } else {
-        // console.log(svgString)
-      // }
-
-
-
-      callback();
-
-    }
-
-      firstFile = false;
-
-  });
-  console.log(counter);
-
-
-
- return stream;
+module.exports.getSvgs = function( userOptions ){
+    options = Object.assign(options, userOptions);
+    return through.obj(iterateFile, iterationResult);
 };
