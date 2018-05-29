@@ -39,7 +39,7 @@ module.exports = settings => {
 ////////////////////////////////////////////////////////////////////////////////
 
 var tags = {
-  open  : '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="0" height="0" style="position:absolute; display:none; overflow:hidden !important;">\n',
+  open  : '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" width="0" height="0" style="position:absolute; display:none; overflow:hidden !important;">\n',
   close : '</svg>'
 }
 
