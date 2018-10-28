@@ -1,15 +1,20 @@
 ////////////////////////////////////////////////////////////////////////////////
-// Settings
+// Gulp SVG to Symbols
 ////////////////////////////////////////////////////////////////////////////////
+
+// =============================================================================
+// Settings
+// =============================================================================
 
 'use strict'
 
-// Dependencies
+// Requirments
 const through = require('through2'),
-fs = require('fs'),
-path = require('path'),
-File     = require('vinyl');
+      fs      = require('fs'),
+      path    = require('path'),
+      File    = require('vinyl');
 
+// Regex Expressions
 var expressions = {
   svg        : /(<svg)([^<]*|[^>]*)([\s\S]*?)<\/svg>/gm,
   style      : /(<style)([^<]*|[^>]*)([\s\S]*?)<\/style>/gm,
@@ -18,182 +23,163 @@ var expressions = {
   extension  : /(.*)\.[^.]+$/g,
 };
 
-var files = {};
+// Global Variables
+var files   = {};
 var symbols = {};
-var output = null;
+var svgs    = [];
+var output  = null;
+
+// Configurable Options
 var options = {
-  prefix : 'icon',
+  prefix   : 'icon',
   sanitise : false,
-  styles : false,
-  exclude : [],
-  scss : false
+  exclude  : [],
+  scss     : false
 };
 
+// Export Module
 module.exports = settings => {
+  // Merge settings that where passed into module with the default options
   options = Object.assign(options, settings);
-  return through.obj(iterateFile, iterationResult);
+  return through.obj(iterate, result);
 };
 
-////////////////////////////////////////////////////////////////////////////////
-// Symbols File
-////////////////////////////////////////////////////////////////////////////////
+// =============================================================================
+// Iterate through files
+// =============================================================================
 
-var tags = {
-  open  : '<svg id="symbols" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" width="0" height="0" style="position:absolute; display:none; overflow:hidden !important;">\n',
-  close : '</svg>'
-}
+function iterate(file, encoding, callback){
+  output = output || file;
 
-/**
-* Push the end result of the files iteration back to the stream
-*/
-function iterationResult( callback ){
+  let svg = getSVGData(file);
+  let path = files;
 
-  output = output ? output.clone() : new File();
+  // If the scss option is enabled, start building
+  // a associtiation array with each symbol name and it's width and height.
+  if ( options.scss !== false && typeof svg.filename !== 'undefined' ) {
+    symbols[svg.filename] = {
+      "width" : parseInt(svg.width, 10),
+      "height" : parseInt(svg.height, 10)
+    }
+  }
 
-  createSassFile();
+  // If the filename exists in the exclusion array, the don't include it.
+  if ( !options.exclude.includes(svg.filename)) {
+    svgs.push(svg.symbol);
+  }
 
-  output.contents = new Buffer(
-    tags.open + beautifySVG(objToString(files)) + tags.close
-  );
 
-  this.push(output);
   callback();
 }
 
-////////////////////////////////////////////////////////////////////////////////
-// Sass File
-////////////////////////////////////////////////////////////////////////////////
+// =============================================================================
+// Manage the final results
+// =============================================================================
 
-function createSassFile() {
+function result(callback){
+
+  output = output ? output.clone() : new File();
 
   if (symbols !== null && typeof options.scss == 'string' ) {
 
-    var data = JSON.stringify(symbols);
-
-    var map = `$symbols: ${data};`;
+    let data = JSON.stringify(symbols, null, '\t');
+    let map = `$symbols: ${data};`;
 
     fs.writeFileSync(options.scss, beautifySCSS(map));
 
   }
-}
 
-////////////////////////////////////////////////////////////////////////////////
+  let svgData = svgs.join("\n");
 
+  output.contents = new Buffer(
+    `<svg id="symbols" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" width="0" height="0" style="position:absolute; display:none; overflow:hidden !important;">\n${svgData}\n\n</svg>`
+  );
 
-function getProperties(properties) {
-  var props = [];
-  var match;
-  while ((match = expressions.properties.exec(properties)) != null) {
-    props[match[1].toLowerCase()] = match[2];
-  }
-  return props;
-}
-
-function getDimensions(viewbox) {
-  var coords = viewbox.split(" ");
-  return {width:coords[2], height:coords[3]}
-}
-
-function parseFileName( file ){
-  var name = path.basename(file.path).replace(expressions.extension, '$1').toLowerCase();
-  return name;
-}
-
-function parseFileContent( file ){
-
-  var contents = file.contents.toString("utf-8");
-  var filename = parseFileName(file);
-
-  var safename = (`${options.prefix}-${filename}`).replace(options.prefix+'-'+options.prefix, options.prefix);
-
-  var content = contents.replace(expressions.svg, '$3').replace(expressions.junk, '')
-
-  if ( options.styles ) {
-    content = content.replace(expressions.style, '');
-  }
-
-  var properties = getProperties(contents.replace(expressions.svg, '$2'));
-  var dimensions = getDimensions(properties.viewbox);
-
-  if ( options.scss !== false ) {
-    symbols[filename] = {
-      "width" : parseInt(dimensions.width, 10),
-      "height" : parseInt(dimensions.height, 10)
-    }
-  }
-
-  if ( options.exclude.length && options.exclude.includes(filename)) {
-    return "";
-  }
-
-  return `\n<symbol id="${safename}" viewbox="0 0 ${dimensions.width} ${dimensions.height}">\n  ${content}</symbol>\n`;
-
-}
-
-
-
-// Iterates on each file in the stream
-function iterateFile( file, enc, callback ){
-  output = output || file;
-  var fileName = parseFileName(file),
-  path = files; // path.relative(file.base, file.path);
-
-  var filePathArr = fileName.split('\\');
-
-  filePathArr.forEach((v, i) => {
-    // last part is the file name itself and not a path
-    if( i == filePathArr.length - 1 ) {
-      path[v] = parseFileContent(file);
-    } else if( v in path ) {
-      path = path[v];
-    } else {
-      path = path[v] = {};
-    }
-  })
+  this.push(output);
 
   callback();
 }
 
+// =============================================================================
+// SVG Data
+// =============================================================================
 
-function objToString (obj) {
-  var str = '';
-  for (var p in obj) {
-    if (obj.hasOwnProperty(p)) {
-      str += obj[p] + '\n';
-    }
+function getSVGData(file){
+
+  let fileContent = file.contents.toString("utf-8");
+
+  // Filename
+  let filename = path.basename(file.path).replace(expressions.extension, '$1').toLowerCase();
+
+  // Fix the file name if it is the same as the prefix.
+  let safename = (`${options.prefix}-${filename}`).replace(options.prefix+'-'+options.prefix, options.prefix);
+
+  // Return everything inside the SVG Tags
+  let data = fileContent.replace(expressions.svg, '$3');
+
+  // If the sanitising option is true
+  if ( options.sanitise ) {
+
+    // Removing any XML tags and commenting
+    data = data.replace(expressions.junk, '');
+
+    // Remove any style tags
+    data = data.replace(expressions.style, '');
   }
-  return str;
+
+  // Get the SVG Tag opener and all the attributes within it.
+  let svgAttributes = fileContent.replace(expressions.svg, '$2')
+
+  // Run through the attributes and push each property to an array
+  let properties = [];
+  let match;
+  while ((match = expressions.properties.exec(svgAttributes)) != null) {
+    properties[match[1].toLowerCase()] = match[2];
+  }
+
+  // Pull out the viewbox from the properties array turn into an array
+  let coords = properties.viewbox.split(" ");
+
+  // Then set the width and heigh into an array
+  let dimensions = {width:coords[2], height:coords[3]}
+
+  // Compile the symbol string
+  let symbol = `\n<symbol id="${safename}" viewbox="0 0 ${dimensions.width} ${dimensions.height}">\n\t${beautifySVG(data)}</symbol>`;
+
+  let result = {
+    symbol     : symbol,
+    width      : dimensions.width,
+    height     : dimensions.height,
+    id         : safename,
+    filename   : filename,
+    properties : properties
+  }
+
+  return result;
+
 }
 
+// =============================================================================
+// Beautifiers
+// =============================================================================
 
-////////////////////////////////////////////////////////////////////////////////
-// Private Functions
-////////////////////////////////////////////////////////////////////////////////
+// SCSS ------------------------------------------------------------------------
 
-/**
- * SCSS Beautifier
- */
 function beautifySCSS(data) {
   return data.replace(/['"]+/gm, '')
   .replace(/{/gm, '(')
   .replace(/}/gm, ')')
-  .replace(/,/gm, ',\n')
-  .replace(/[)],/gm, '\n),\n')
-  .replace(/[(]/g, '(\n')
-  .replace(/[)];/gm, '\n\n);')
 }
 
-/**
- * SVG Beautifier
- */
+// SVG -------------------------------------------------------------------------
+
 function beautifySVG(data) {
-  const PADDING = ' '.repeat(2);
   const reg = /(>)(<)(\/*)/g;
   let pad = 0;
 
   data = data.replace(reg, '$1\r\n$2$3');
 
-  return data.split('\r\n').map((node, index) => {
+  data = data.split('\r\n').map((node, index) => {
     let indent = 0;
 
     if (node.match(/.+<\/\w[^>]*>$/)) {
@@ -208,7 +194,11 @@ function beautifySVG(data) {
 
     pad += indent;
 
-    return PADDING.repeat(pad - indent) + node;
+    return '\t\t'.repeat(pad - indent) + node;
 
-  }).join('\r\n').replace(/^(?:[\t ]*(?:\r?\n|\r))+/gm, '');
+  })
+
+  data = data.join('\r\n').replace(/^(?:[\t ]*(?:\r?\n|\r))+/gm, '');
+
+  return data;
 }
