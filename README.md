@@ -1,16 +1,20 @@
-# Gulp SVG to Symbols
+# SVG to Symbols
 
-Compile a bunch of SVG images into one single file, with all files sanitised and refactor to be used as symbols.
+![Made For NPM](https://img.shields.io/badge/Made%20for-NPM-orange.svg) ![Made For Gulp](https://img.shields.io/badge/Made%20for-Gulp-red.svg)
 
-### Installation
+Compile a source of SVG images into one single file, with all files sanitised and refactored to be used as symbols.
+
+## Installation
 ```
-npm i gulp-svg-to-symbols --save
+npm i @marknotton/svg-to-symbols --save-dev
+```
+```js
+const symbols = require('@marknotton/svg-to-symbols');
 ```
 
-### Setup
+## Usage
 
 ```js
-const svgToSymbols = require('gulp-svg-to-symbols')
 
 gulp.task('symbols', () => {
 
@@ -29,11 +33,11 @@ gulp.task('symbols', () => {
 });
 ```
 
-### Options
+## Options
 
 | Setting | Type | Default | Description |
 |--|--|--|--|
 | prefix | string | icon | All symbol element ID's will be prefixed with this string. A hyphen will be used to separate the prefix and the filename to create a valid ID name. If the prefix name matches an actual filename, then no prefix will be applied.
-| exclude | array | null | There may be cases (particularly with complex SVG's) where you don't want to include a SVG image into the symbols file. An array of SVG filenames will be ignored (no need to include the file extension). This does not effect the sass map. 
+| exclude | array | null | There may be cases (particularly with complex SVG's) where you don't want to include a SVG image into the symbols file. An array of SVG filenames will be ignored (no need to include the file extension). This does not effect the sass map.
 | scss | string/bool | false | Define a path and filename to store a file which contains a Sass map for each symbol. The map will contain the symbol names, height and width. This can come in handy when you need to calculate the original aspect ratios of each symbol.
 | sanitise | bool | true | Removes any inline style tags, XML tags and commenting from the symbols. Unless your SVG elements are very cleanly coded, you may find many files contain potentially conflicting CSS styling directly in the file. If you need to retain the styling of a symbol, it's recommended you do this elsewhere (like a global .css file).
