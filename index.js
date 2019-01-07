@@ -54,7 +54,8 @@ module.exports = settings => {
 // =============================================================================
 
 function iterate(file, encoding, callback){
-  output = output || file;
+
+	output = output || file;
 
   let svg = getSVGData(file);
   let path = files;
@@ -71,7 +72,6 @@ function iterate(file, encoding, callback){
 		if ( options.children && typeof svg.children !== 'undefined' ) {
 			symbols[svg.filename]['children'] = svg.children;
 		}
-
   }
 
   // If the filename exists in the exclusion array, the don't include it.
@@ -83,9 +83,13 @@ function iterate(file, encoding, callback){
   callback();
 }
 
-function getGroupName(node) {
+// =============================================================================
+// Get a legibal node name using any given data attrbutes
+// =============================================================================
 
-	let name = 'g'
+function getNodeName(node) {
+
+	let name = node.tagName
 
 	// Add ID attribute if it exists
 	if (node.attribs['id'] ) {
@@ -100,83 +104,212 @@ function getGroupName(node) {
 	return name
 }
 
-function containsObject(obj, list) {
-    var i;
-    for (i = 0; i < list.length; i++) {
-        if (list[i] === obj) {
-            return list[i];
-        }
-    }
+// =============================================================================
+// Recrusive function to check how many levels of group there are in a given node
+// =============================================================================
 
-    return false;
+let groupDepth = 1;
+let groupTarget = '';
+
+function getGroupDepth(node) {
+	if ( node.parent.tagName == 'g') {
+		groupDepth ++
+		getGroupDepth(node.parent)
+	}
+	return groupDepth
+}
+
+function getGroupTargets(node) {
+	let name = getNodeName(node);
+	if ( name !== '' && name !== node.parent.tagName) {
+		groupTarget = groupTarget + ' ' + name + ' '
+	} else {
+		groupTarget = `${groupTarget} g:nth-of-type(${groupDepth}) `
+	}
 }
 
 // =============================================================================
 // Manage the final results
 // =============================================================================
 
-let svgElements = [];
-let groups = [];
+let svgElements  = [];
+let groupCounter = 0;
 
 function getSVGElements(svg) {
 
-	let total = 0;
-	let children = svg.children();
+	svg.children().each((index, child) => {
 
-	children.each((index, child) => {
-		let $child = cheerio(child),
-		tag = child.tagName;
+		let $child    = cheerio(child);
+		let $parent   = $child.get(0).parent;
+		let _counters = {};
 
-		if ( $child.get(0).parent.tagName == 'g' || $child.get(0).parent.tagName == 'svg' ) {
+		// Gather data relative to the childs parent if it's a group or the root 'svg' tag.
+		if ( $parent.tagName == 'g' || $parent.tagName == 'svg' ) {
 
-			let parent = cheerio($child.get(0).parent);
+			// Incriment the group counter
+			if ( $parent.tagName == 'g' ) {
 
-			let parentName = getGroupName(parent.get(0));
+				if ( child.tagName != 'g' && groupCounter > 0) {
 
-			let groupChildren = parent.children();
+					// TODO: managed nested groups and their tagets
+					// let depth = getGroupDepth($parent);
+					// $child['depth'] = depth;
+					// // groupTarget = `${groupTarget} g:nth-of-type(${groupCounter})`;
+					// //
+					// getGroupTargets($parent);
+					// //
+					// console.log(groupCounter, depth, groupTarget.replace('  ', ' ').trim())
+					// // // groupCounter = groupDepth - groupCounter;
+					// groupDepth = 1;
+					// groupTarget = '';
+				}
 
-			let itemIndex = index + 1;
+				if (!('index' in $parent)) {
+					groupCounter ++
+					$parent['index'] = groupCounter;
+				}
 
-			let groupCount = groupChildren.length;
+			}
 
-			let _elementCounts = {};
-
-			groupChildren.each((i, c) => {
+			// Run through each child of the parent
+			cheerio($parent).children().each((i, c) => {
+				// If the child matches a valid SVG element type
 				if (validSVGElements.indexOf(c.tagName) !== -1) {
-					if ( c.tagName in _elementCounts ) {
-						_elementCounts[c.tagName] = _elementCounts[c.tagName] + 1;
-						c['index'] = _elementCounts[c.tagName];
+					// Add a incirmental variable for each tag type
+					if ( c.tagName in _counters ) {
+						_counters[c.tagName] = _counters[c.tagName] + 1;
 					} else {
-						_elementCounts[c.tagName] = 1;
-						c['index'] = 1;
+						_counters[c.tagName] = 1;
 					}
+					// Add that index directly to the child for later use.
+					c['index'] = _counters[c.tagName];
 				}
 			})
 
-			$child['group'] = {
-				parentName : parentName,
-				itemIndex : itemIndex,
-				groupCount : groupCount
-			}
-
-			// console.log(parentName, 'itemIndex: ' + itemIndex, 'groupIndex: ' + groupIndex, 'groupCount: ' + groupCount, elementCounts)
-
 		}
 
-		if (['style', 'mask', 'clipPath', 'defs'].indexOf(tag) !== -1) {
+		if (['style', 'mask', 'clipPath', 'defs'].indexOf(child.tagName) !== -1) {
 			return;
-		} else if (validSVGElements.indexOf(tag) !== -1) {
-			total ++;
+		} else if (validSVGElements.indexOf(child.tagName) !== -1) {
 			svgElements.push($child);
 		}
-
 
 		// Check child elements
 		getSVGElements($child);
 	});
 
+
 	return svgElements
 }
+
+function getSVGChildData(fileContent) {
+
+	// Convert the SVG content into a jQuery-like object
+	let svg = cheerio.load(fileContent.trim(), {
+		lowerCaseAttributeNames: false,
+		xmlMode: true
+	})
+
+	// Target the root of the svg
+	let root = svg(':root')
+
+	var children = []
+
+	// If the root exists, we know we have a valid SVG file
+	if (!root.length || root.get(0).tagName === 'svg') {
+
+		// Gather all the child elements within the SVG if they match the tag types we're after
+		let nodes = getSVGElements(root);
+
+		nodes.forEach((node, index) => {
+
+			// Set an empty object ready to be populated with child data
+			let depth = node.depth || false;
+
+			// Get the bounds data for this node
+			let bounds = boundings.shape(node, true);
+
+			// Going forward, we'll only need to get the first item of each node object
+			node = node.get(0);
+
+			let name = getNodeName(node);
+
+			let child = {
+				left   : bounds.left,
+				top    : bounds.top,
+				width  : bounds.width,
+				height : bounds.height,
+				y      : (bounds.top + (bounds.height/2)),
+				x      : (bounds.left + (bounds.width/2))
+			}
+
+			// Data keys
+			let keys = Object.keys(child)
+
+			// Data values rounded down to 2 decimals places and suffixed with the 'px' unit
+			let values = Object.values(child).map(item => (Math.round(item * 100) / 100) + 'px')
+
+			// Zip the keys and amended values together
+			child = values.reduce((obj, value, index) => ({...obj, [keys[index]]: value}), {})
+
+			// Add the node name if it has any unique attrbutes like a class or id
+			// if ( name !== '' && name !== node.tagName) {
+			// 	child = { name : name, ...child }
+			// }
+
+			// Add the type and index after the other elements have had units added
+			child = {
+				type   : node['name'],
+				index  : node['index'],
+				...child
+			}
+
+			// -----------------------------------------------------------------------
+			// Use all the data gathered to render a usable target
+			// -----------------------------------------------------------------------
+
+			let target = '';
+
+			// Add Group details
+			if ( node.parent.name == 'g') {
+
+				if ( depth > 1) {
+					target = 'g '.repeat(depth - 1)
+				}
+
+				let parentName = getNodeName(node.parent);
+
+				// Add the node name if it has any unique attrbutes like a class or id
+				if ( parentName !== '' && parentName !== node.parent.tagName) {
+					target = target + parentName + ' '
+				} else {
+					target = `${target}g:nth-of-type(${node.parent['index']}) `
+				}
+
+				if ( name !== '' && name !== node.tagName) {
+					target = target + name;
+				} else {
+					target = `${target} ${node['name']}:nth-of-type(${node['index']})`;
+				}
+
+			}
+
+			if ( target !== '' ) {
+				child = { 'target' : target.replace('  ', ' '),	...child}
+				// console.log(target.replace('  ', ' '));
+			}
+
+			children.push(child)
+
+		})
+
+	}
+
+	return children;
+
+
+}
+
 
 // =============================================================================
 // SVG Data
@@ -195,97 +328,6 @@ function getSVGData(file){
   // Return everything inside the SVG Tags
   let data = fileContent.replace(expressions.svg, '$3');
 
-	// Add child data for each element
-	if ( options.children ) {
-		if ( filename == 'logo') {
-
-		// Convert the SVG content into a jQuery-like object
-		let svg = cheerio.load(fileContent.trim(), {
-			lowerCaseAttributeNames: false,
-			xmlMode: true
-		})
-
-		// Target the root of the svg
-		let root = svg(':root')
-
-		var children = []
-
-		// If the root exists, we know we have a valid SVG file
-		if (!root.length || root.get(0).tagName === 'svg') {
-
-			// Gather all the child elements within the SVG if they match the tag types we're after
-			let nodes = getSVGElements(root);
-
-			nodes.forEach((node, index) => {
-
-				// Set an empty object ready to be populated with child data
-				let child = {}
-				let group = node.group || false;
-
-				// Get the bounds data for this node
-				let bounds = boundings.shape(node, true);
-
-				// Going forward, we'll only need to get the first item of each node object
-				node = node.get(0);
-
-				child = {
-					...child,
-					left   : bounds.left,
-					top    : bounds.top,
-					width  : bounds.width,
-					height : bounds.height,
-					y      : (bounds.top + (bounds.height/2)),
-					x      : (bounds.left + (bounds.width/2))
-				}
-
-				// Data keys
-				let keys = Object.keys(child)
-
-				// Data values rounded down to 2 decimals places and suffixed with the 'px' unit
-				let values = Object.values(child).map(item => (Math.round(item * 100) / 100) + 'px')
-
-				// Zip the keys and amended values together
-				child = values.reduce((obj, value, index) => ({...obj, [keys[index]]: value}), {})
-
-				// Add ID attribute if it exists
-				if ( node.attribs['id'] ) {
-					child = {id : node.attribs['id'], ...child}
-				}
-
-				// Add Class attribute if it exists
-				if ( node.attribs['class'] ) {
-					child = {class : node.attribs['class'], ...child}
-				}
-
-				// Add element tag type attribute
-				if ( node.name ) {
-					child = {type : node.name, ...child}
-				}
-
-
-				//
-				child = { 'type-index' : node['index'], ...child}
-
-				// Gather Group details
-				if ( node.parent.name == 'g') {
-
-					child = {
-						group : group.parentName,
-						'type-index' : node['index'],
-						'group-index' : (group.groupCount - group.groupIndex),
-						...child
-					}
-
-				}
-
-				children.push(child)
-
-			})
-
-		}
-
-	}
-}
   // If the sanitising option is true
   if ( options.sanitise ) {
 
@@ -318,6 +360,10 @@ function getSVGData(file){
 	// Clear SVG Elements array
 	svgElements = []
 
+	// Reset the group counter
+	groupCounter = 0;
+
+
   let result = {
     symbol     : symbol,
     width      : dimensions.width,
@@ -328,8 +374,9 @@ function getSVGData(file){
   }
 
 	// Only add the svg children if the option is enabled and there if any children actaully exist
-	if ( options.children && typeof children !== 'undefined' ) {
-		result['children'] = children;
+	if ( options.children ) {
+		let children = getSVGChildData(fileContent);
+		if ( children ) {	result['children'] = children }
 	}
 
   return result;
@@ -375,9 +422,7 @@ function beautifySCSS(data) {
 	.replace(/['"]/gm, '')
   .replace(/{/gm, '(')
   .replace(/}/gm, ')')
-	.replace(/group: (.*)/gm, 'group: "$1"')
-	.replace(/id: (.*)/gm, 'id: "$1"')
-	.replace(/class: (.*)/gm, 'class: "$1"')
+	.replace(/target: (.*)/gm, 'target: "$1"')
 	.replace(/,"/gm, '",')
 }
 
