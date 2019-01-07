@@ -1,6 +1,6 @@
 {
   "name": "@marknotton/svg-to-symbols",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "A simple SVG to Symbols generator",
   "main": "index.js",
   "scripts": {
@@ -8,7 +8,9 @@
   },
   "dependencies": {
     "through2": "^2.0.3",
-    "vinyl": "^2.0.0"
+    "vinyl": "^2.0.0",
+		"svg-boundings": "^2.0.2", 
+		"cheerio": "^1.0.0-rc.2"
   },
   "repository": {
     "type": "git",
