@@ -31,7 +31,7 @@ var files   = {};
 var symbols = {};
 var svgs    = [];
 var output  = null;
-var validSVGElements = ['path', 'circle', 'line', 'polygon', 'polyline', 'rect', 'ellipse'];
+var validSVGElements = ['path', 'circle', 'line', 'polygon', 'polyline', 'rect', 'ellipse', 'use'];
 
 // Configurable Options
 var options = {
@@ -64,8 +64,8 @@ function iterate(file, encoding, callback){
   // a associtiation array with each symbol name and it's width and height.
   if ( options.scss !== false && typeof svg.filename !== 'undefined' ) {
     symbols[svg.filename] = {
-      "width"    : parseInt(svg.width, 10),
-      "height"   : parseInt(svg.height, 10),
+      "width"    : parseInt(svg.width, 10) + 'px',
+      "height"   : parseInt(svg.height, 10) + 'px',
     }
 
 		// Only add the svg children if the option is enabled and there if any children actaully exist
@@ -205,36 +205,51 @@ function getSVGElements(svg) {
 function getSVGChildData(fileContent) {
 
 	// Convert the SVG content into a jQuery-like object
-	let svg = cheerio.load(fileContent.trim(), {
+	let $ = cheerio.load(fileContent.trim(), {
 		lowerCaseAttributeNames: false,
 		xmlMode: true
 	})
 
 	// Target the root of the svg
-	let root = svg(':root')
+	let svg = $(':root')
 
 	var children = []
 
 	// If the root exists, we know we have a valid SVG file
-	if (!root.length || root.get(0).tagName === 'svg') {
+	if (!svg.length || svg.get(0).tagName === 'svg') {
 
 		// Gather all the child elements within the SVG if they match the tag types we're after
-		let nodes = getSVGElements(root);
+		let nodes = getSVGElements(svg);
 
 		nodes.forEach((node, index) => {
 
 			// Set an empty object ready to be populated with child data
 			let depth = node.depth || false;
 
+			let element = node.get(0);
+
+			let name = getNodeName(element);
+
+			// Add the type and index after the other elements have had units added
+			let child = {
+				type   : element['name'],
+				index  : element['index']
+			}
+
+			if (element.tagName == 'use') {
+			 	node = $(element.attribs.href);
+				if ( name == 'use' ) {
+					name = 'use[href=' + element.attribs.href + ']';
+				}
+				element = node.get(0);
+				child['type'] = 'use';
+			}
+
 			// Get the bounds data for this node
 			let bounds = boundings.shape(node, true);
 
-			// Going forward, we'll only need to get the first item of each node object
-			node = node.get(0);
 
-			let name = getNodeName(node);
-
-			let child = {
+			let units = {
 				left   : bounds.left,
 				top    : bounds.top,
 				width  : bounds.width,
@@ -244,25 +259,21 @@ function getSVGChildData(fileContent) {
 			}
 
 			// Data keys
-			let keys = Object.keys(child)
+			let keys = Object.keys(units)
 
 			// Data values rounded down to 2 decimals places and suffixed with the 'px' unit
-			let values = Object.values(child).map(item => (Math.round(item * 100) / 100) + 'px')
+			let values = Object.values(units).map(item => (Math.round(item * 100) / 100) + 'px')
 
 			// Zip the keys and amended values together
-			child = values.reduce((obj, value, index) => ({...obj, [keys[index]]: value}), {})
+			units = values.reduce((obj, value, index) => ({...obj, [keys[index]]: value}), {})
+
+			child = { ...child, ...units };
 
 			// Add the node name if it has any unique attrbutes like a class or id
 			// if ( name !== '' && name !== node.tagName) {
 			// 	child = { name : name, ...child }
 			// }
 
-			// Add the type and index after the other elements have had units added
-			child = {
-				type   : node['name'],
-				index  : node['index'],
-				...child
-			}
 
 			// -----------------------------------------------------------------------
 			// Use all the data gathered to render a usable target
@@ -271,33 +282,33 @@ function getSVGChildData(fileContent) {
 			let target = '';
 
 			// Add Group details
-			if ( node.parent.name == 'g') {
+			if ( element.parent.name == 'g') {
 
 				if ( depth > 1) {
 					target = 'g '.repeat(depth - 1)
 				}
 
-				let parentName = getNodeName(node.parent);
+				let parentName = getNodeName(element.parent);
+
+				child = { 'group' : element.parent['index'],	...child}
 
 				// Add the node name if it has any unique attrbutes like a class or id
-				if ( parentName !== '' && parentName !== node.parent.tagName) {
+				if ( parentName !== '' && parentName !== element.parent.tagName) {
 					target = target + parentName + ' '
 				} else {
-					target = `${target}g:nth-of-type(${node.parent['index']}) `
-				}
-
-				if ( name !== '' && name !== node.tagName) {
-					target = target + name;
-				} else {
-					target = `${target} ${node['name']}:nth-of-type(${node['index']})`;
+					target = `${target}g:nth-of-type(${element.parent['index']}) `
 				}
 
 			}
 
-			if ( target !== '' ) {
-				child = { 'target' : target.replace('  ', ' '),	...child}
-				// console.log(target.replace('  ', ' '));
+			if ( name !== '' && name !== element.tagName) {
+				target = target + name;
+			} else {
+				target = `${target} ${element['name']}:nth-of-type(${element['index']})`;
 			}
+
+			child = { 'target' : target.replace('  ', ' ').trim(),	...child}
+			// console.log(target.replace('  ', ' '));
 
 			children.push(child)
 
@@ -422,8 +433,10 @@ function beautifySCSS(data) {
 	.replace(/['"]/gm, '')
   .replace(/{/gm, '(')
   .replace(/}/gm, ')')
-	.replace(/target: (.*)/gm, 'target: "$1"')
-	.replace(/,"/gm, '",')
+	.replace(/target: (.*)/gm, "target: '$1'")
+	.replace(/href=(.*)/gm, 'href="$1"')
+	.replace(/,'/gm, "',")
+	.replace(/]',"/gm, "\"]',")
 }
 
 // SVG -------------------------------------------------------------------------
