@@ -18,21 +18,21 @@ const svgToSymbols = require('@marknotton/svg-to-symbols');
 
 gulp.task('symbols', () => {
 
-    let options = {
-	    symbolIdAttr : (filename) => { return filename + '-foo-bar },
-		removeClassAttr : true,
-		prefix : 'icon-',
-		containerId : 'symbols',
-		svgo : { 
-			plugins : [ 
-				{ removeXMLNS : false }
-			]
-		}
-    };
+  let options = {
+    symbolIdAttr : (filename) => { return filename + '-foo-bar' },
+    removeClassAttr : true,
+    prefix : 'icon-',
+    containerId : 'symbols',
+    svgo : { 
+      plugins : [ 
+        { removeXMLNS : false }
+      ]
+    }
+  };
 
-    return gulp.src('/assets/images/**/*.svg')
-    .pipe(svgToSymbols('symbols.svg', options))
-    .pipe(gulp.dest(images))
+  return gulp.src('/assets/images/!(symbols)**/*.svg')
+  .pipe(svgToSymbols('symbols.svg', options))
+  .pipe(gulp.dest('/assets/images'))
 
 });
 ```
@@ -45,5 +45,5 @@ gulp.task('symbols', () => {
 | removeClassAttr | bool | true | Removes the class attribute on all symbol parent elements | 
 | prefix | string | icon- | All symbol element ID's will be prefixed with this string. 
 | containerId | string | 'symbols' | ID added to the `<svg>` that wraps all the symbols  | 
-| containerAttributes | object| | HTML attributes that get added to the `<svg>` that wraps all the symbols.   Nested objects will be prefixed with the parent key name. `{ data : { foo : bar }}` will be `<svg data-foo="bar">` style being the exception and is handled to behave as expected for CSS| 
+| containerAttributes | object| | HTML attributes that get added to the `<svg>` that wraps all the symbols.   Nested objects will be prefixed with the parent key name. `{ data : { foo : bar }}` will be `<svg data-foo="bar">`. **style** being the exception and is handled to behave as expected for CSS| 
 | svgo | Object | | Pass in any options that Svgo natively supports to fully customise your output. By default *svg-to-syboles* has altered Svgos' default options so that **removeXMLNS** is `true`, **cleanupIDs** is `false`, and **sortAttrs** is `true`. Everthing else is the same. [See here for formatting guidelines](https://ourcodeworld.com/articles/read/659/how-to-decrease-shrink-svg-file-size-with-svgo-in-nodejs) and [go here for more information on Svgo plugins](https://github.com/svg/svgo)| 
