@@ -2,471 +2,254 @@
 // Gulp SVG to Symbols
 ////////////////////////////////////////////////////////////////////////////////
 
+// This is essentialy a fork of gulp-contact with svgo intigrations 
+
 // =============================================================================
 // Settings
 // =============================================================================
 
 'use strict'
 
-// Requirments
-const through   = require('through2'),
-      fs        = require('fs'),
-      path      = require('path'),
-      File      = require('vinyl'),
-			boundings = require('svg-boundings'),
-			cheerio   = require('cheerio');
+const { Transform }  = require('stream')
+const Svgo           = require('svgo')
+const path           = require('path')
+const File           = require('vinyl')
+const Concat         = require('concat-with-sourcemaps')
+const Symbol         = require('./symbol')
+const defaultOptions = {
+	/** 
+	 * @param {function} symbolIdAttr Defaults to filename 
+	 * Can be also function with the original filename as a callback param
+	 * @example symbolIdAttr : (filename) => { return filename + '-foo-bar }
+	 */
+	removeClassAttr : true, 
+	prefix  : 'icon-',
+	containerId : 'symbols',
+	containerAttributes : {
+		'xmlns'       : 'http://www.w3.org/2000/svg',
+		'aria'        : { 'hidden' : 'true' },
+		'width'       : "0",
+		'height'      : "0",
+		'style' : {
+			'position' : 'absolute', 
+			'display'  : 'none', 
+			'overflow' : 'hidden !important',
+		}
+	},
+	/**
+	 * Passing in SVG Plugin properties must be done as a flattened object, 
+	 * unlike the native method described in their documentation. 
+	 * I didn't feel an array of objects with singular booleans was necessary. 
+	 * You can still pass individual plugin settings as values. 
+	 * @see https://ourcodeworld.com/articles/read/659/how-to-decrease-shrink-svg-file-size-with-svgo-in-nodejs
+	 * @see https://github.com/svg/svgo
+	 */
+	svgo : {
+		plugins : [
+			{ removeXMLNS : true },
+			{ cleanupIDs  : false },
+			{ sortAttrs   : true }
+		]
+	}
+}
+let options  = {}
 
-// Regex Expressions
-var expressions = {
-  svg        : /(<svg)([^<]*|[^>]*)([\s\S]*?)<\/svg>/gm,
-  style      : /(<style)([^<]*|[^>]*)([\s\S]*?)<\/style>/gm,
-  properties : /(\S+)=["']?((?:.(?!["']?\s+(?:\S+)=|[>"']))+.)["']?/gm,
-  junk       : /(<!--(.*?)-->)|(<\?xml.*?\?>)/g,
-  extension  : /(.*)\.[^.]+$/g,
-};
 
+/**
+ * Adds multiple attributes values to a HTML tag
+ * @param {string} html <svg>  
+ * @param {object} attributes 
+ */
 
-// Global Variables
-var files   = {};
-var symbols = {};
-var svgs    = [];
-var output  = null;
-var validSVGElements = ['path', 'circle', 'line', 'polygon', 'polyline', 'rect', 'ellipse', 'use'];
+function setAttributes(html, attributes) {
 
-// Configurable Options
-var options = {
-  prefix   : 'icon',
-  sanitise : false,
-  exclude  : [],
-  scss     : false,
-	children : false
-};
+	for (const [key, value] of Object.entries(attributes)) {
+		if ( typeof(value) === 'string' ) {
+			html = html.replace('>', ` ${key}="${value}">`)
+		}
+		if ( typeof(value) === 'object' ) {
+			if ( key === 'style' ) {
+				let declarations = ""
+				for (const [nestedKey, nestedValue] of Object.entries(value)) {
+					declarations = `${declarations} ${nestedKey}:${nestedValue};`
+				}
+				html = html.replace('>', ` ${key}="${declarations.trim()}">`)
+			} else {
+				for (const [nestedKey, nestedValue] of Object.entries(value)) {
+					html = html.replace('>', ` ${key}-${nestedKey}="${nestedValue}">`)					
+				}
+			}
+		}
+	}
 
-// Export Module
-module.exports = settings => {
-  // Merge settings that where passed into module with the default options
-  options = Object.assign(options, settings);
-  return through.obj(iterate, result);
-};
+	return html
 
-// =============================================================================
-// Iterate through files
-// =============================================================================
+}
 
-function iterate(file, encoding, callback){
+/**
+ * Wrap Content in an <svg> tag along with data attributes supplied in the optns 
+ * @param {String} content 
+ * @param {Object} options 
+ */
+function wrapContent(content) {
 
-	output = output || file;
+	if ( options.containerId ) {
+		options.containerAttributes = Object.assign({'id': options.containerId}, options.containerAttributes);
+	}
 
-  let svg = getSVGData(file);
-  let path = files;
+	let container = setAttributes('<svg>', options.containerAttributes)
 
-  // If the scss option is enabled, start building
-  // a associtiation array with each symbol name and it's width and height.
-  if ( options.scss !== false && typeof svg.filename !== 'undefined' ) {
-    symbols[svg.filename] = {
-      "width"    : parseInt(svg.width, 10) + 'px',
-      "height"   : parseInt(svg.height, 10) + 'px',
+	return Buffer.from(`${container}\n${content}\n</svg>`);
+}
+
+/**
+ * @see https://stackoverflow.com/a/48218209
+ * @param  {...any} objects 
+ */
+function mergeDeep(...objects) {
+  const isObject = obj => obj && typeof obj === 'object';
+  
+  return objects.reduce((prev, obj) => {
+    Object.keys(obj).forEach(key => {
+
+      const pVal = prev[key];
+      const oVal = obj[key];
+      
+      if (Array.isArray(pVal) && Array.isArray(oVal)) {
+        prev[key] = pVal.concat(...oVal);
+      }
+      else if (isObject(pVal) && isObject(oVal)) {
+        prev[key] = mergeDeep(pVal, oVal);
+      }
+      else {
+				prev[key] = oVal;
+      }
+    });
+    
+    return prev;
+  }, {});
+}
+
+// file can be a vinyl file object or a string
+// when a string it will construct a new one
+module.exports = function(file, opt = {}) {
+
+  if (!file) {
+    throw new Error('svg-to-symbols: Missing file option');
+	}
+	
+  // to preserve existing |undefined| behaviour and to introduce |newLine: ""| for binaries
+  if (typeof opt.newLine !== 'string') {
+    opt.newLine = '\n';
+  }
+
+	// Merge default settings and any settings passed in directly
+	options = {...defaultOptions, ...opt }
+
+	if ( options.svgo.plugins ) {
+		options.svgo = mergeDeep(defaultOptions.svgo, options.svgo)
+	}
+
+	const stream = new Transform({objectMode: true})
+
+	var isUsingSourceMaps = false;
+  var latestFile;
+  var latestMod;
+  var fileName;
+  var concat;
+	
+  if (typeof file === 'string') {
+    fileName = file;
+  } else if (typeof file.path === 'string') {
+    fileName = path.basename(file.path);
+  } else {
+    throw new Error('svg-to-symbols: Missing path in file options');
+  }
+
+	/**
+	 * Stream Buffer -------------------------------------------------------------
+	 * gulp-concat bufferContents method converted to nodes native stream _transform method
+	 */
+
+  stream._transform = function(file, enc, cb) {
+
+		/**
+		* Because the file needs to be passed into each instance of the svgo class, we
+		* have to instantiate the class for every file in the transforms/buffer method
+		*/
+
+		let symbol = Symbol
+		symbol.params = { file, options }
+		options.svgo.plugins.push({ symbol : symbol	})
+
+    // ignore empty files
+    if (file.isNull()) {
+      cb();
+      return;
     }
 
-		// Only add the svg children if the option is enabled and there if any children actaully exist
-		if ( options.children && typeof svg.children !== 'undefined' ) {
-			symbols[svg.filename]['children'] = svg.children;
+    // we don't do streams (yet)
+    if (file.isStream()) {
+      this.emit('error', new Error('svg-to-symbols: Streaming not supported'));
+      cb();
+      return;
 		}
-  }
-
-  // If the filename exists in the exclusion array, the don't include it.
-  if ( !options.exclude.includes(svg.filename)) {
-    svgs.push(svg.symbol);
-  }
-
-
-  callback();
-}
-
-// =============================================================================
-// Get a legibal node name using any given data attrbutes
-// =============================================================================
-
-function getNodeName(node) {
-
-	let name = node.tagName
-
-	// Add ID attribute if it exists
-	if (node.attribs['id'] ) {
-		name = name + '#' +node.attribs['id']
-	}
-
-	// Add Class attribute if it exists
-	if (node.attribs['class'] ) {
-		name = name + '.' +node.attribs['class']
-	}
-
-	return name
-}
-
-// =============================================================================
-// Recrusive function to check how many levels of group there are in a given node
-// =============================================================================
-
-let groupDepth = 1;
-let groupTarget = '';
-
-function getGroupDepth(node) {
-	if ( node.parent.tagName == 'g') {
-		groupDepth ++
-		getGroupDepth(node.parent)
-	}
-	return groupDepth
-}
-
-function getGroupTargets(node) {
-	let name = getNodeName(node);
-	if ( name !== '' && name !== node.parent.tagName) {
-		groupTarget = groupTarget + ' ' + name + ' '
-	} else {
-		groupTarget = `${groupTarget} g:nth-of-type(${groupDepth}) `
-	}
-}
-
-// =============================================================================
-// Manage the final results
-// =============================================================================
-
-let svgElements  = [];
-let groupCounter = 0;
-
-function getSVGElements(svg) {
-
-	svg.children().each((index, child) => {
-
-		let $child    = cheerio(child);
-		let $parent   = $child.get(0).parent;
-		let _counters = {};
-
-		// Gather data relative to the childs parent if it's a group or the root 'svg' tag.
-		if ( $parent.tagName == 'g' || $parent.tagName == 'svg' ) {
-
-			// Incriment the group counter
-			if ( $parent.tagName == 'g' ) {
-
-				if ( child.tagName != 'g' && groupCounter > 0) {
-
-					// TODO: managed nested groups and their tagets
-					// let depth = getGroupDepth($parent);
-					// $child['depth'] = depth;
-					// // groupTarget = `${groupTarget} g:nth-of-type(${groupCounter})`;
-					// //
-					// getGroupTargets($parent);
-					// //
-					// console.log(groupCounter, depth, groupTarget.replace('  ', ' ').trim())
-					// // // groupCounter = groupDepth - groupCounter;
-					// groupDepth = 1;
-					// groupTarget = '';
-				}
-
-				if (!('index' in $parent)) {
-					groupCounter ++
-					$parent['index'] = groupCounter;
-				}
-
-			}
-
-			// Run through each child of the parent
-			cheerio($parent).children().each((i, c) => {
-				// If the child matches a valid SVG element type
-				if (validSVGElements.indexOf(c.tagName) !== -1) {
-					// Add a incirmental variable for each tag type
-					if ( c.tagName in _counters ) {
-						_counters[c.tagName] = _counters[c.tagName] + 1;
-					} else {
-						_counters[c.tagName] = 1;
-					}
-					// Add that index directly to the child for later use.
-					c['index'] = _counters[c.tagName];
-				}
-			})
-
+		
+    // set latest file if not already set,
+    // or if the current file was modified more recently.
+    if (!latestMod || file.stat && file.stat.mtime > latestMod) {
+			latestFile = file;
+      latestMod = file.stat && file.stat.mtime;
 		}
+		
+    // construct concat instance
+    if (!concat) {
+      concat = new Concat(isUsingSourceMaps, fileName, opt.newLine);
+    }
 
-		if (['style', 'mask', 'clipPath', 'defs'].indexOf(child.tagName) !== -1) {
-			return;
-		} else if (validSVGElements.indexOf(child.tagName) !== -1) {
-			svgElements.push($child);
-		}
-
-		// Check child elements
-		getSVGElements($child);
-	});
-
-
-	return svgElements
-}
-
-function getSVGChildData(fileContent) {
-
-	// Convert the SVG content into a jQuery-like object
-	let $ = cheerio.load(fileContent.trim(), {
-		lowerCaseAttributeNames: false,
-		xmlMode: true
-	})
-
-	// Target the root of the svg
-	let svg = $(':root')
-
-	var children = []
-
-	// If the root exists, we know we have a valid SVG file
-	if (!svg.length || svg.get(0).tagName === 'svg') {
-
-		// Gather all the child elements within the SVG if they match the tag types we're after
-		let nodes = getSVGElements(svg);
-
-		nodes.forEach((node, index) => {
-
-			// Set an empty object ready to be populated with child data
-			let depth = node.depth || false;
-
-			let element = node.get(0);
-
-			let name = getNodeName(element);
-
-			// Add the type and index after the other elements have had units added
-			let child = {
-				type   : element['name'],
-				index  : element['index']
-			}
-
-			if (element.tagName == 'use') {
-			 	node = $(element.attribs.href);
-				if ( name == 'use' ) {
-					name = 'use[href=' + element.attribs.href + ']';
-				}
-				element = node.get(0);
-				child['type'] = 'use';
-			}
-
-			// Get the bounds data for this node
-			let bounds = boundings.shape(node, true);
-
-
-			let units = {
-				left   : bounds.left,
-				top    : bounds.top,
-				width  : bounds.width,
-				height : bounds.height,
-				y      : (bounds.top + (bounds.height/2)),
-				x      : (bounds.left + (bounds.width/2))
-			}
-
-			// Data keys
-			let keys = Object.keys(units)
-
-			// Data values rounded down to 2 decimals places and suffixed with the 'px' unit
-			let values = Object.values(units).map(item => (Math.round(item * 100) / 100) + 'px')
-
-			// Zip the keys and amended values together
-			units = values.reduce((obj, value, index) => ({...obj, [keys[index]]: value}), {})
-
-			child = { ...child, ...units };
-
-			// Add the node name if it has any unique attrbutes like a class or id
-			// if ( name !== '' && name !== node.tagName) {
-			// 	child = { name : name, ...child }
-			// }
-
-
-			// -----------------------------------------------------------------------
-			// Use all the data gathered to render a usable target
-			// -----------------------------------------------------------------------
-
-			let target = '';
-
-			// Add Group details
-			if ( element.parent.name == 'g') {
-
-				if ( depth > 1) {
-					target = 'g '.repeat(depth - 1)
-				}
-
-				let parentName = getNodeName(element.parent);
-
-				child = { 'group' : element.parent['index'],	...child}
-
-				// Add the node name if it has any unique attrbutes like a class or id
-				if ( parentName !== '' && parentName !== element.parent.tagName) {
-					target = target + parentName + ' '
-				} else {
-					target = `${target}g:nth-of-type(${element.parent['index']}) `
-				}
-
-			}
-
-			if ( name !== '' && name !== element.tagName) {
-				target = target + name;
-			} else {
-				target = `${target} ${element['name']}:nth-of-type(${element['index']})`;
-			}
-
-			child = { 'target' : target.replace('  ', ' ').trim(),	...child}
-			// console.log(target.replace('  ', ' '));
-
-			children.push(child)
-
+		new Svgo(options.svgo).optimize(String(file.contents)).then(result => {
+			concat.add(file.relative, result.data, false);
+		}, error => {
+			throw new Error('svg-to-symbols: ' + path.parse(file.path).name + ' : ' +  error)
 		})
 
+		cb();
 	}
+	
 
-	return children;
+	/**
+	 * Stream Flush --------------------------------------------------------------
+	 * gulp-concat endStream method converted to nodes native stream _flush method
+	 */
 
-
-}
-
-
-// =============================================================================
-// SVG Data
-// =============================================================================
-
-function getSVGData(file){
-
-  let fileContent = file.contents.toString("utf-8");
-
-  // Filename
-  let filename = path.basename(file.path).replace(expressions.extension, '$1').toLowerCase();
-
-  // Fix the file name if it is the same as the prefix.
-  let safename = (`${options.prefix}-${filename}`).replace(options.prefix+'-'+options.prefix, options.prefix);
-
-  // Return everything inside the SVG Tags
-  let data = fileContent.replace(expressions.svg, '$3');
-
-  // If the sanitising option is true
-  if ( options.sanitise ) {
-
-    // Removing any XML tags and commenting
-    data = data.replace(expressions.junk, '')
-
-    // Remove any style tags
-    data = data.replace(expressions.style, '')
-  }
-
-  // Get the SVG Tag opener and all the attributes within it.
-  let svgAttributes = fileContent.replace(expressions.svg, '$2')
-
-  // Run through the attributes and push each property to an array
-  let properties = [];
-  let match;
-  while ((match = expressions.properties.exec(svgAttributes)) != null) {
-    properties[match[1].toLowerCase()] = match[2]
-  }
-
-  // Pull out the viewbox from the properties array turn into an array
-  let coords = properties.viewbox.split(" ")
-
-  // Then set the width and heigh into an array
-  let dimensions = {width:coords[2], height:coords[3]}
-
-  // Compile the symbol string
-  let symbol = `\n<symbol id="${safename}" viewbox="0 0 ${dimensions.width} ${dimensions.height}">\n\t${beautifySVG(data)}</symbol>`;
-
-	// Clear SVG Elements array
-	svgElements = []
-
-	// Reset the group counter
-	groupCounter = 0;
-
-
-  let result = {
-    symbol     : symbol,
-    width      : dimensions.width,
-    height     : dimensions.height,
-    id         : safename,
-    filename   : filename,
-    properties : properties
-  }
-
-	// Only add the svg children if the option is enabled and there if any children actaully exist
-	if ( options.children ) {
-		let children = getSVGChildData(fileContent);
-		if ( children ) {	result['children'] = children }
-	}
-
-  return result;
-
-}
-
-// =============================================================================
-// Manage the final results
-// =============================================================================
-
-function result(callback){
-
-  output = output ? output.clone() : new File();
-
-  if (symbols !== null && typeof options.scss == 'string' ) {
-
-    let data = JSON.stringify(symbols, null, '\t');
-    let map = `$symbols: ${data};`;
-
-    fs.writeFileSync(options.scss, beautifySCSS(map));
-
-  }
-
-  let svgData = svgs.join("\n");
-
-  output.contents = new Buffer(
-    `<svg id="symbols" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" width="0" height="0" style="position:absolute; display:none; overflow:hidden !important;">\n${svgData}\n\n</svg>`
-  );
-
-  this.push(output);
-
-  callback();
-}
-
-// =============================================================================
-// Beautifiers
-// =============================================================================
-
-// SCSS ------------------------------------------------------------------------
-
-function beautifySCSS(data) {
-  return data
-	.replace(/['"]/gm, '')
-  .replace(/{/gm, '(')
-  .replace(/}/gm, ')')
-	.replace(/target: (.*)/gm, "target: '$1'")
-	.replace(/href=(.*)/gm, 'href="$1"')
-	.replace(/,'/gm, "',")
-	.replace(/]',"/gm, "\"]',")
-}
-
-// SVG -------------------------------------------------------------------------
-
-function beautifySVG(data) {
-  const reg = /(>)(<)(\/*)/g;
-  let pad = 0;
-
-  data = data.replace(reg, '$1\r\n$2$3');
-
-  data = data.split('\r\n').map((node, index) => {
-    let indent = 0;
-
-    if (node.match(/.+<\/\w[^>]*>$/)) {
-      indent = 0;
-    } else if (node.match(/^<\/\w/) && pad > 0) {
-      pad -= 1;
-    } else if (node.match(/^<\w[^>]*[^\/]>.*$/)) {
-      indent = 1;
-    } else {
-      indent = 0;
+  stream._flush = function(cb) {
+    // no files passed in, no file goes out
+    if (!latestFile || !concat) {
+      cb();
+      return;
     }
 
-    pad += indent;
+    var joinedFile;
 
-    return '\t\t'.repeat(pad - indent) + node;
+    // if file opt was a file path
+    // clone everything from the latest file
+    if (typeof file === 'string') {
+      joinedFile = latestFile.clone({contents: false});
+      joinedFile.path = path.join(latestFile.base, file);
+    } else {
+      joinedFile = new File(file);
+    }
 
-  })
+    joinedFile.contents = wrapContent(concat.content);
 
-  data = data.join('\r\n').replace(/^(?:[\t ]*(?:\r?\n|\r))+/gm, '');
+    if (concat.sourceMapping) {
+      joinedFile.sourceMap = JSON.parse(concat.sourceMap);
+    }
 
-  return data;
-}
+    this.push(joinedFile);
+    cb();
+  }
+
+	return stream;
+
+};
