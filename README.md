@@ -30,7 +30,7 @@ gulp.task('symbols', () => {
     }
   };
 
-  return gulp.src('/assets/images/!(symbols)**/*.svg')
+  return gulp.src('/assets/images/**/!(symbols)*.svg')
   .pipe(svgToSymbols('symbols.svg', options))
   .pipe(gulp.dest('/assets/images'))
 
@@ -47,3 +47,14 @@ gulp.task('symbols', () => {
 | containerId | string | 'symbols' | ID added to the `<svg>` that wraps all the symbols  | 
 | containerAttributes | object| | HTML attributes that get added to the `<svg>` that wraps all the symbols.   Nested objects will be prefixed with the parent key name. `{ data : { foo : bar }}` will be `<svg data-foo="bar">`. **style** being the exception and is handled to behave as expected for CSS| 
 | svgo | Object | | Pass in any options that Svgo natively supports to fully customise your output. By default *svg-to-syboles* has altered Svgos' default options so that **removeXMLNS** is `true`, **cleanupIDs** is `false`, and **sortAttrs** is `true`. Everthing else is the same. [See here for formatting guidelines](https://ourcodeworld.com/articles/read/659/how-to-decrease-shrink-svg-file-size-with-svgo-in-nodejs) and [go here for more information on Svgo plugins](https://github.com/svg/svgo)| 
+
+## Example
+
+```html
+<svg id="symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" width="0" height="0" style="position:absolute; display:none; overflow:hidden !important;">
+  <symbol viewBox="0 0 170.4 85.9" id="icon-arrow-down"><path fill="none" d="M170.1.4L85.2 85.2.4.4"/></symbol>
+  <symbol viewBox="0 0 85.9 170.4" id="icon-arrow-left"><path fill="none" d="M85.6 170.1L.7 85.2 85.6.4"/></symbol>
+  <symbol viewBox="0 0 85.9 170.4" id="icon-arrow-right"><path fill="none" d="M.4.4l84.8 84.8L.4 170.1"/></symbol>
+  <symbol viewBox="0 0 170.4 85.9" id="icon-arrow-up"><path fill="none" d="M.4 85.6L85.2.7l84.9 84.9"/></symbol>
+</svg>
+```

@@ -208,7 +208,7 @@ module.exports = function(file, opt = {}) {
     }
 
 		new Svgo(options.svgo).optimize(String(file.contents)).then(result => {
-			concat.add(file.relative, result.data, false);
+			concat.add(file.relative, '  '+result.data, false);
 		}, error => {
 			throw new Error('svg-to-symbols: ' + path.parse(file.path).name + ' : ' +  error)
 		})
