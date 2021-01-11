@@ -46,7 +46,18 @@ exports.fn = function(item, params) {
     element.attrs.id = { 
       name: 'id',
       value: fileName,
-    }      
+    }
+
+    // Because we're manipulating the filename to generate an id, there may
+    // be cases where the filename could be a purposeful value for query selection
+    if ( options.addOriginalFilenameAttrToSymbols ) {
+      element.addAttr({ 
+        name: 'data-filename',
+        value: path.parse(params.file.path).name,
+        prefix: '',
+        local: 'class'
+      })
+    }
   }
 
   return item

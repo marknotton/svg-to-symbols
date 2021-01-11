@@ -25,6 +25,7 @@ const defaultOptions = {
 	removeClassAttr : true, 
 	prefix  : 'icon-',
 	containerId : 'symbols',
+	addOriginalFilenameAttrToSymbols : true,
 	containerAttributes : {
 		'xmlns'       : 'http://www.w3.org/2000/svg',
 		'aria'        : { 'hidden' : 'true' },
@@ -145,6 +146,8 @@ module.exports = function(file, opt = {}) {
 
 	// Merge default settings and any settings passed in directly
 	options = {...defaultOptions, ...opt }
+
+	console.log(options)
 
 	if ( options.svgo.plugins ) {
 		options.svgo = mergeDeep(defaultOptions.svgo, options.svgo)
