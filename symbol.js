@@ -17,7 +17,7 @@ exports.fn = function(item, params) {
     let element  = item.content[0]
 
     // Only add the prefix if it doesn't exits in the file name
-    if ( fileName.indexOf(options.prefix, 0) !== 0 ) {
+    if ( (fileName + '-').indexOf(options.prefix, 0) !== 0 ) {
       fileName = options.prefix + fileName
     }
 
