@@ -1,6 +1,6 @@
 {
   "name": "@marknotton/svg-to-symbols",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "description": "A simple SVG to Symbols generator",
   "main": "index.js",
   "scripts": {
