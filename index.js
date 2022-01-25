@@ -14,7 +14,7 @@ const through   = require('through2'),
       path      = require('path'),
       File      = require('vinyl'),
 			boundings = require('svg-boundings'),
-			cheerio   = require('cheerio');
+			cheerio   = require('cheerio').default;
 
 // Regex Expressions
 var expressions = {
